@@ -1,0 +1,37 @@
+name: Publish Legacy Calculator Asset
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-calculator-asset.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download original-design IPA
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            -o original.ipa \
+            'https://github.com/arambarzani07/Daftarqarz/releases/download/daftarqarz-latest/Daftarqarz-OriginalDesign-0.2.7-build25.ipa'
+
+      - name: Extract and verify exact calculator GIF
+        run: |
+          set -euo pipefail
+          unzip -p original.ipa 'Payload/Runner.app/Frameworks/App.framework/flutter_assets/assets/images/calculator.gif' > calculator.gif
+          test "$(stat -c%s calculator.gif)" = '1027087'
+          echo '6c88690dd54246996e833ce48ea10ac13e9f336548d8b4627036de5609cbc86f  calculator.gif' | sha256sum -c -
+          file calculator.gif
+
+      - name: Upload stable release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload daftarqarz-latest calculator.gif --clobber
