@@ -1,0 +1,42 @@
+name: Inspect released IPA Firebase symbols
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inspect-release-ipa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download released IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download daftarqarz-latest -p 'Daftarqarzsafeen.ipa' -D input
+          unzip -q input/Daftarqarzsafeen.ipa -d ipa
+      - name: Inspect native and Dart binaries for Firebase
+        run: |
+          set -euo pipefail
+          APP=$(find ipa/Payload -maxdepth 1 -type d -name '*.app' | head -1)
+          echo "APP=$APP"
+          echo '=== frameworks ==='
+          find "$APP/Frameworks" -maxdepth 1 -type d -name '*.framework' -printf '%f\n' | sort || true
+          echo '=== Runner strings ==='
+          strings "$APP/Runner" | grep -Eai 'Firebase|FIRApp|FIRMessaging|FLTFirebase|MessagingPlugin|GoogleService' | head -100 || true
+          echo '=== App.framework strings ==='
+          strings "$APP/Frameworks/App.framework/App" | grep -Eai 'Firebase|FIRApp|FIRMessaging|FLTFirebase|MessagingPlugin|GoogleService|firebase_messaging|firebase_core' | head -200 || true
+          echo '=== all embedded binaries ==='
+          find "$APP" -type f -perm -111 -print0 | while IFS= read -r -d '' f; do
+            if strings "$f" | grep -Eaq 'FLTFirebase|FIRMessaging|firebase_messaging|firebase_core'; then
+              echo "MATCH $f"
+              strings "$f" | grep -Ea 'FLTFirebase|FIRMessaging|firebase_messaging|firebase_core' | head -30 || true
+            fi
+          done
