@@ -1,0 +1,104 @@
+name: Publish Exact Original Design IPA Build 25
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-original-design-build25.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified exact-design build 24
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download daftarqarz-latest -p 'Daftarqarz-OriginalDesign-0.2.7-build24.ipa' -D input
+          test -s input/Daftarqarz-OriginalDesign-0.2.7-build24.ipa
+          echo '301e8e989498895427b55fbc69f8ffaa661171abc48761514749d97a0cd143f1  input/Daftarqarz-OriginalDesign-0.2.7-build24.ipa' | sha256sum -c -
+
+      - name: Preserve original UI and bump only build number
+        run: |
+          set -euo pipefail
+          rm -rf work
+          mkdir work
+          unzip -q input/Daftarqarz-OriginalDesign-0.2.7-build24.ipa -d work
+          python3 - <<'PY'
+          import hashlib, pathlib, plistlib
+          app = pathlib.Path('work/Payload/Runner.app')
+          info_path = app / 'Info.plist'
+          app_binary = app / 'Frameworks/App.framework/App'
+          runner_binary = app / 'Runner'
+          with info_path.open('rb') as f:
+              info = plistlib.load(f)
+          assert info['CFBundleIdentifier'] == 'com.void.daftarQarz'
+          assert info['CFBundleShortVersionString'] == '0.2.7'
+          assert info['CFBundleVersion'] == '24'
+          assert info['MinimumOSVersion'] == '15.5'
+          fb = plistlib.load((app / 'GoogleService-Info.plist').open('rb'))
+          assert fb['PROJECT_ID'] == 'dafterqarz'
+          assert fb['GCM_SENDER_ID'] == '308705635892'
+          assert fb['GOOGLE_APP_ID'] == '1:308705635892:ios:c76aa9e6cb84662f4a2461'
+          assert fb['BUNDLE_ID'] == 'com.void.daftarQarz'
+          assert (app / 'Frameworks/FirebaseMessaging.framework/FirebaseMessaging').exists()
+          def sha(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+          before_app = sha(app_binary)
+          before_runner = sha(runner_binary)
+          info['CFBundleVersion'] = '25'
+          with info_path.open('wb') as f:
+              plistlib.dump(info, f, fmt=plistlib.FMT_BINARY)
+          assert sha(app_binary) == before_app
+          assert sha(runner_binary) == before_runner
+          print('App.framework SHA256:', before_app)
+          print('Runner SHA256:', before_runner)
+          print('Bundle:', info['CFBundleIdentifier'])
+          print('Version:', info['CFBundleShortVersionString'])
+          print('Build:', info['CFBundleVersion'])
+          PY
+          rm -rf work/Payload/Runner.app/_CodeSignature
+          rm -f work/Payload/Runner.app/embedded.mobileprovision
+
+      - name: Package exact-design build 25 IPA
+        run: |
+          set -euo pipefail
+          (cd work && zip -qry ../Daftarqarz-OriginalDesign-0.2.7-build25.ipa Payload)
+          test -s Daftarqarz-OriginalDesign-0.2.7-build25.ipa
+          unzip -p Daftarqarz-OriginalDesign-0.2.7-build25.ipa Payload/Runner.app/Info.plist > /tmp/Info.plist
+          python3 - <<'PY'
+          import plistlib
+          info = plistlib.load(open('/tmp/Info.plist','rb'))
+          assert info['CFBundleIdentifier'] == 'com.void.daftarQarz'
+          assert info['CFBundleShortVersionString'] == '0.2.7'
+          assert info['CFBundleVersion'] == '25'
+          assert info['MinimumOSVersion'] == '15.5'
+          PY
+          sha256sum Daftarqarz-OriginalDesign-0.2.7-build25.ipa | tee build25.sha256
+
+      - name: Publish exact-design build 25
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload daftarqarz-latest \
+            Daftarqarz-OriginalDesign-0.2.7-build25.ipa \
+            build25.sha256 \
+            --clobber
+
+      - name: Verify published asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir verify
+          gh release download daftarqarz-latest -p 'Daftarqarz-OriginalDesign-0.2.7-build25.ipa' -D verify
+          test -s verify/Daftarqarz-OriginalDesign-0.2.7-build25.ipa
+          sha256sum verify/Daftarqarz-OriginalDesign-0.2.7-build25.ipa
