@@ -83,12 +83,13 @@ jobs:
           with open(firebase_path, 'wb') as fh:
               plistlib.dump(firebase, fh, fmt=plistlib.FMT_XML, sort_keys=False)
 
-          messaging_framework = os.path.join(app, 'Frameworks', 'FirebaseMessaging.framework')
-          core_framework = os.path.join(app, 'Frameworks', 'FirebaseCore.framework')
-          if not os.path.isdir(core_framework):
-              raise SystemExit('FirebaseCore.framework missing from IPA')
-          if not os.path.isdir(messaging_framework):
-              raise SystemExit('FirebaseMessaging.framework missing from IPA')
+          frameworks_dir = os.path.join(app, 'Frameworks')
+          frameworks = sorted(os.path.basename(p) for p in glob.glob(os.path.join(frameworks_dir, '*.framework')))
+          print('Embedded frameworks:', ', '.join(frameworks))
+          required = {'firebase_core.framework', 'firebase_messaging.framework'}
+          missing = required.difference(frameworks)
+          if missing:
+              raise SystemExit('Missing Flutter Firebase plugin framework(s): ' + ', '.join(sorted(missing)))
 
           with open(firebase_path, 'rb') as fh:
               check = plistlib.load(fh)
@@ -111,7 +112,8 @@ jobs:
           print('Version:', info.get('CFBundleShortVersionString'))
           print('Build:', info.get('CFBundleVersion'))
           print('Background modes:', info.get('UIBackgroundModes'))
-          print('FirebaseMessaging.framework: present')
+          print('firebase_core.framework: present')
+          print('firebase_messaging.framework: present')
           PY
 
           cat > Daftarqarzsafeen.entitlements.plist <<'EOF'
@@ -127,7 +129,7 @@ jobs:
 
           test -s Daftarqarzsafeen.ipa
           unzip -l Daftarqarzsafeen.ipa | grep -q 'Payload/Runner.app/GoogleService-Info.plist'
-          unzip -l Daftarqarzsafeen.ipa | grep -q 'Payload/Runner.app/Frameworks/FirebaseMessaging.framework/'
+          unzip -l Daftarqarzsafeen.ipa | grep -q 'Payload/Runner.app/Frameworks/firebase_messaging.framework/'
           sha256sum Daftarqarzsafeen.ipa
 
       - name: Preserve original and publish fixed IPA
