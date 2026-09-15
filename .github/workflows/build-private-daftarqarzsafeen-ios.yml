@@ -24,10 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${PRIVATE_REPO_TOKEN:-}" ]; then
-            echo 'Missing repository secret: DAFTARQARZSAFEEN_READ_TOKEN'
-            exit 2
-          fi
+          test -n "${PRIVATE_REPO_TOKEN:-}" || { echo 'Missing DAFTARQARZSAFEEN_READ_TOKEN'; exit 2; }
 
       - name: Checkout private source without persisting credentials
         uses: actions/checkout@v4
@@ -43,24 +40,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd private-source
-          git rev-parse HEAD | tee ../PRIVATE_SOURCE_SHA.txt
+          git -C private-source rev-parse HEAD | tee PRIVATE_SOURCE_SHA.txt
 
-      - name: Verify locked legacy visual contract is active
+      - name: Verify exact locked legacy UI baseline
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'version: 0.2.7+27' private-source/source/pubspec.yaml
-          grep -q 'LockedLegacyMainScreen' private-source/source/lib/widgets/home_totals_panel.dart
-          grep -q 'class LockedLegacyMainScreen' private-source/source/lib/screens/locked_legacy_main_screen.dart
-          grep -q 'ThemeMode themeMode = ThemeMode.dark' private-source/source/lib/state/app_settings_controller.dart
-          grep -q "'کۆی گشتی قەرز :'" private-source/source/lib/screens/locked_legacy_main_screen.dart
-          grep -q "'کۆی گشتی وەرگیراو :'" private-source/source/lib/screens/locked_legacy_main_screen.dart
-          grep -q "'قەرزی گشتی ئێستا :'" private-source/source/lib/screens/locked_legacy_main_screen.dart
-          if grep -q '_NoticeCard' private-source/source/lib/screens/locked_legacy_main_screen.dart; then
-            echo 'Locked home was polluted by a new notice card.'
-            exit 3
-          fi
+          grep -q '^version: 0.2.7+27$' private-source/source/pubspec.yaml
+
+          check_blob() {
+            local path="$1"
+            local expected="$2"
+            local actual
+            actual="$(git -C private-source hash-object "$path")"
+            echo "$path  $actual"
+            test "$actual" = "$expected" || {
+              echo "LOCKED UI MISMATCH: $path"
+              echo "expected=$expected"
+              echo "actual=$actual"
+              exit 20
+            }
+          }
+
+          check_blob source/lib/screens/settings_screen.dart ca1b8053d0058b0125adafa70856d114cf923910
+          check_blob source/lib/screens/loan_detail_screen.dart 04b63864c28b200dcb7d10aecd4e765c3f71333e
+          check_blob source/lib/widgets/amount_card.dart b5fe7457fc63595deb397e773605a52f63b9e590
+          check_blob source/lib/widgets/home_totals_panel.dart 06725b37e35d7de7f7817c91024ce01335212d0e
+          check_blob source/lib/state/app_settings_controller.dart 5e9564971631313ef311ce5f52124c0174f878e6
+          check_blob source/test/legacy_ui_lock_test.dart acbe58650def4fc34c13ed055a082516a863e1f2
+
+          test ! -e private-source/source/lib/screens/locked_legacy_main_screen.dart
+          test ! -e private-source/source/lib/screens/legacy_settings_screen.dart
+          grep -q 'MainScreen' private-source/source/lib/widgets/home_totals_panel.dart
+          grep -q 'ThemeMode themeMode = ThemeMode.system' private-source/source/lib/state/app_settings_controller.dart
+          echo 'Exact locked legacy core UI verified.'
 
       - uses: subosito/flutter-action@v2
         with:
@@ -150,7 +163,6 @@ jobs:
           test -d "$APP"
           cp firebase/GoogleService-Info.plist "$APP/GoogleService-Info.plist"
           plutil -lint "$APP/GoogleService-Info.plist"
-
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = 'com.void.daftarQarz'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = '0.2.7'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '27'
