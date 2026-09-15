@@ -1,0 +1,154 @@
+name: Patch released IPA with legacy Firebase
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-firebase-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download current IPA release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download daftarqarz-latest -p 'Daftarqarzsafeen.ipa' -D input
+          test -s input/Daftarqarzsafeen.ipa
+          sha256sum input/Daftarqarzsafeen.ipa
+
+      - name: Patch recovered Firebase and background push configuration
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob
+          import os
+          import plistlib
+          import shutil
+          import zipfile
+
+          source = 'input/Daftarqarzsafeen.ipa'
+          work = 'patched-work'
+          output = 'Daftarqarzsafeen.ipa'
+          shutil.rmtree(work, ignore_errors=True)
+          os.makedirs(work, exist_ok=True)
+
+          with zipfile.ZipFile(source) as zf:
+              zf.extractall(work)
+
+          apps = glob.glob(os.path.join(work, 'Payload', '*.app'))
+          if len(apps) != 1:
+              raise SystemExit(f'Expected exactly one .app, found {len(apps)}')
+          app = apps[0]
+
+          info_path = os.path.join(app, 'Info.plist')
+          with open(info_path, 'rb') as fh:
+              info = plistlib.load(fh)
+
+          bundle_id = info.get('CFBundleIdentifier')
+          if bundle_id != 'com.void.daftarQarz':
+              raise SystemExit(f'Unexpected bundle id: {bundle_id!r}')
+
+          modes = list(info.get('UIBackgroundModes') or [])
+          for mode in ('fetch', 'remote-notification'):
+              if mode not in modes:
+                  modes.append(mode)
+          info['UIBackgroundModes'] = modes
+          with open(info_path, 'wb') as fh:
+              plistlib.dump(info, fh, fmt=plistlib.FMT_BINARY)
+
+          firebase = {
+              'API_KEY': 'AIzaSyAJK6uRj1zVvl429OZsmHhPySOH_B5PemY',
+              'GCM_SENDER_ID': '308705635892',
+              'PLIST_VERSION': '1',
+              'BUNDLE_ID': 'com.void.daftarQarz',
+              'PROJECT_ID': 'dafterqarz',
+              'STORAGE_BUCKET': 'dafterqarz.firebasestorage.app',
+              'IS_ADS_ENABLED': False,
+              'IS_ANALYTICS_ENABLED': False,
+              'IS_APPINVITE_ENABLED': True,
+              'IS_GCM_ENABLED': True,
+              'IS_SIGNIN_ENABLED': True,
+              'GOOGLE_APP_ID': '1:308705635892:ios:c76aa9e6cb84662f4a2461',
+          }
+          firebase_path = os.path.join(app, 'GoogleService-Info.plist')
+          with open(firebase_path, 'wb') as fh:
+              plistlib.dump(firebase, fh, fmt=plistlib.FMT_XML, sort_keys=False)
+
+          messaging_framework = os.path.join(app, 'Frameworks', 'FirebaseMessaging.framework')
+          core_framework = os.path.join(app, 'Frameworks', 'FirebaseCore.framework')
+          if not os.path.isdir(core_framework):
+              raise SystemExit('FirebaseCore.framework missing from IPA')
+          if not os.path.isdir(messaging_framework):
+              raise SystemExit('FirebaseMessaging.framework missing from IPA')
+
+          with open(firebase_path, 'rb') as fh:
+              check = plistlib.load(fh)
+          assert check['PROJECT_ID'] == 'dafterqarz'
+          assert check['BUNDLE_ID'] == 'com.void.daftarQarz'
+          assert check['GCM_SENDER_ID'] == '308705635892'
+          assert check['GOOGLE_APP_ID'] == '1:308705635892:ios:c76aa9e6cb84662f4a2461'
+          assert 'remote-notification' in info['UIBackgroundModes']
+
+          if os.path.exists(output):
+              os.remove(output)
+          with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+              for root, dirs, files in os.walk(os.path.join(work, 'Payload')):
+                  for filename in files:
+                      path = os.path.join(root, filename)
+                      zf.write(path, os.path.relpath(path, work))
+
+          print('Patched app:', os.path.basename(app))
+          print('Bundle:', bundle_id)
+          print('Version:', info.get('CFBundleShortVersionString'))
+          print('Build:', info.get('CFBundleVersion'))
+          print('Background modes:', info.get('UIBackgroundModes'))
+          print('FirebaseMessaging.framework: present')
+          PY
+
+          cat > Daftarqarzsafeen.entitlements.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>aps-environment</key>
+            <string>production</string>
+          </dict>
+          </plist>
+          EOF
+
+          test -s Daftarqarzsafeen.ipa
+          unzip -l Daftarqarzsafeen.ipa | grep -q 'Payload/Runner.app/GoogleService-Info.plist'
+          unzip -l Daftarqarzsafeen.ipa | grep -q 'Payload/Runner.app/Frameworks/FirebaseMessaging.framework/'
+          sha256sum Daftarqarzsafeen.ipa
+
+      - name: Preserve original and publish fixed IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp input/Daftarqarzsafeen.ipa Daftarqarzsafeen-run19-original.ipa
+          gh release upload daftarqarz-latest \
+            Daftarqarzsafeen-run19-original.ipa \
+            Daftarqarzsafeen.ipa \
+            Daftarqarzsafeen.entitlements.plist \
+            --clobber
+
+      - name: Verify release asset is downloadable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf verify-download
+          mkdir verify-download
+          gh release download daftarqarz-latest -p 'Daftarqarzsafeen.ipa' -D verify-download
+          test -s verify-download/Daftarqarzsafeen.ipa
+          sha256sum verify-download/Daftarqarzsafeen.ipa
