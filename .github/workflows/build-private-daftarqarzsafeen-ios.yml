@@ -1,0 +1,184 @@
+name: Build Private Daftarqarzsafeen iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-private-daftarqarzsafeen-ios.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daftarqarzsafeen-private-ios
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      PRIVATE_REPO_TOKEN: ${{ secrets.DAFTARQARZSAFEEN_READ_TOKEN }}
+    steps:
+      - name: Verify private repository token exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${PRIVATE_REPO_TOKEN:-}" ]; then
+            echo 'Missing repository secret: DAFTARQARZSAFEEN_READ_TOKEN'
+            echo 'Create a fine-grained GitHub token with Contents: Read access only to arambarzani07/Daftarqarzsafeen, then save it as that Actions secret in this public build repository.'
+            exit 2
+          fi
+
+      - name: Checkout private source without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          repository: arambarzani07/Daftarqarzsafeen
+          ref: main
+          token: ${{ secrets.DAFTARQARZSAFEEN_READ_TOKEN }}
+          path: private-source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Record private source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd private-source
+          git rev-parse HEAD | tee ../PRIVATE_SOURCE_SHA.txt
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        working-directory: private-source/source
+        run: flutter pub get
+
+      - name: Analyze source
+        working-directory: private-source/source
+        run: flutter analyze
+
+      - name: Run tests
+        working-directory: private-source/source
+        run: flutter test
+
+      - name: Generate iOS shell
+        working-directory: private-source/source
+        run: |
+          flutter create --platforms=ios --org com.void --project-name daftr_qarz .
+          rm -f test/widget_test.dart
+
+      - name: Restore legacy iOS identity, Firebase and push capabilities
+        working-directory: private-source/source
+        shell: bash
+        run: |
+          set -euo pipefail
+          PBXPROJ="ios/Runner.xcodeproj/project.pbxproj"
+          PLIST="ios/Runner/Info.plist"
+          ENTITLEMENTS="ios/Runner/Runner.entitlements"
+          FIREBASE_PLIST="firebase/GoogleService-Info.plist"
+
+          test -f "$FIREBASE_PLIST"
+          plutil -lint "$FIREBASE_PLIST"
+
+          perl -0pi -e 's/PRODUCT_BUNDLE_IDENTIFIER = com\.void\.daftrQarz;/PRODUCT_BUNDLE_IDENTIFIER = com.void.daftarQarz;/g; s/PRODUCT_BUNDLE_IDENTIFIER = com\.void\.daftr_qarz;/PRODUCT_BUNDLE_IDENTIFIER = com.void.daftarQarz;/g' "$PBXPROJ"
+          perl -0pi -e 's/(PRODUCT_BUNDLE_IDENTIFIER = com\.void\.daftarQarz;)/$1\n\t\t\t\tCODE_SIGN_ENTITLEMENTS = Runner\/Runner.entitlements;\n\t\t\t\tDEVELOPMENT_TEAM = TJSRQ2GZMU;/g' "$PBXPROJ"
+          perl -0pi -e 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;/IPHONEOS_DEPLOYMENT_TARGET = 15.5;/g' "$PBXPROJ"
+
+          if ! grep -q 'NSFaceIDUsageDescription' "$PLIST"; then
+            perl -0pi -e 's#</dict>#\t<key>NSFaceIDUsageDescription</key>\n\t<string>Face ID بۆ کردنەوەی پارێزراوی Daftar Qarz بەکاردێت.</string>\n</dict>#' "$PLIST"
+          fi
+
+          /usr/libexec/PlistBuddy -c 'Add :UIBackgroundModes array' "$PLIST" 2>/dev/null || true
+          if ! /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$PLIST" 2>/dev/null | grep -q 'fetch'; then
+            COUNT=$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$PLIST" 2>/dev/null | grep -c '^    ' || true)
+            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:$COUNT string fetch" "$PLIST"
+          fi
+          if ! /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$PLIST" 2>/dev/null | grep -q 'remote-notification'; then
+            COUNT=$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$PLIST" 2>/dev/null | grep -c '^    ' || true)
+            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:$COUNT string remote-notification" "$PLIST"
+          fi
+
+          cat > "$ENTITLEMENTS" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>aps-environment</key>
+            <string>production</string>
+          </dict>
+          </plist>
+          EOF
+
+          cp "$FIREBASE_PLIST" ios/Runner/GoogleService-Info.plist
+
+          test "$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$FIREBASE_PLIST")" = 'dafterqarz'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$FIREBASE_PLIST")" = 'com.void.daftarQarz'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :GOOGLE_APP_ID' "$FIREBASE_PLIST")" = '1:308705635892:ios:c76aa9e6cb84662f4a2461'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :GCM_SENDER_ID' "$FIREBASE_PLIST")" = '308705635892'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$ENTITLEMENTS")" = 'production'
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$PLIST" | grep -q 'remote-notification'
+          grep -q 'IPHONEOS_DEPLOYMENT_TARGET = 15.5;' "$PBXPROJ"
+
+      - name: Build unsigned iOS app from latest private source
+        working-directory: private-source/source
+        run: flutter build ios --release --no-codesign
+
+      - name: Verify built app identity and Firebase
+        working-directory: private-source/source
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/ios/iphoneos/Runner.app"
+          ENTITLEMENTS="ios/Runner/Runner.entitlements"
+          test -d "$APP"
+          cp firebase/GoogleService-Info.plist "$APP/GoogleService-Info.plist"
+          plutil -lint "$APP/GoogleService-Info.plist"
+
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = 'com.void.daftarQarz'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = '0.2.7'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '26'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '15.5'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$APP/GoogleService-Info.plist")" = 'dafterqarz'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$APP/GoogleService-Info.plist")" = 'com.void.daftarQarz'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :GOOGLE_APP_ID' "$APP/GoogleService-Info.plist")" = '1:308705635892:ios:c76aa9e6cb84662f4a2461'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :GCM_SENDER_ID' "$APP/GoogleService-Info.plist")" = '308705635892'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$ENTITLEMENTS")" = 'production'
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP/Info.plist" | grep -q 'fetch'
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP/Info.plist" | grep -q 'remote-notification'
+
+      - name: Package unsigned IPA
+        working-directory: private-source/source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/ipa-package build/ipa-output
+          mkdir -p build/ipa-package/Payload build/ipa-output
+          cp -R build/ios/iphoneos/Runner.app build/ipa-package/Payload/Runner.app
+          cp ios/Runner/Runner.entitlements build/ipa-output/Daftarqarzsafeen-build26.entitlements.plist
+          (
+            cd build/ipa-package
+            zip -qry ../ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa Payload
+          )
+          shasum -a 256 build/ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa | tee build/ipa-output/Daftarqarzsafeen-build26.sha256
+
+      - name: Remove checked-out private source before publishing
+        shell: bash
+        run: rm -rf private-source
+
+      - name: Publish build 26 to public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view daftarqarz-latest --repo arambarzani07/Daftarqarz >/dev/null
+          gh release upload daftarqarz-latest \
+            private-source/source/build/ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa \
+            private-source/source/build/ipa-output/Daftarqarzsafeen-build26.entitlements.plist \
+            private-source/source/build/ipa-output/Daftarqarzsafeen-build26.sha256 \
+            PRIVATE_SOURCE_SHA.txt \
+            --repo arambarzani07/Daftarqarz \
+            --clobber
