@@ -1,0 +1,92 @@
+name: Publish Daftar Qarz build 24 IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-build24-ipa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified Firebase-patched IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download daftarqarz-latest -p 'Daftarqarzsafeen.ipa' -D input
+          test -s input/Daftarqarzsafeen.ipa
+
+      - name: Prepare build 24 IPA
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, os, plistlib, shutil, subprocess, zipfile
+          src='input/Daftarqarzsafeen.ipa'
+          work='work'
+          out='Daftarqarzsafeen-0.2.7-build24.ipa'
+          shutil.rmtree(work, ignore_errors=True)
+          os.makedirs(work, exist_ok=True)
+          with zipfile.ZipFile(src) as z: z.extractall(work)
+          apps=glob.glob(os.path.join(work,'Payload','*.app'))
+          if len(apps)!=1: raise SystemExit('Expected exactly one .app')
+          app=apps[0]
+          info_path=os.path.join(app,'Info.plist')
+          with open(info_path,'rb') as f: info=plistlib.load(f)
+          if info.get('CFBundleIdentifier')!='com.void.daftarQarz': raise SystemExit('Bundle ID mismatch')
+          info['CFBundleShortVersionString']='0.2.7'
+          info['CFBundleVersion']='24'
+          modes=list(info.get('UIBackgroundModes') or [])
+          for m in ('fetch','remote-notification'):
+              if m not in modes: modes.append(m)
+          info['UIBackgroundModes']=modes
+          with open(info_path,'wb') as f: plistlib.dump(info,f,fmt=plistlib.FMT_BINARY)
+          fp=os.path.join(app,'GoogleService-Info.plist')
+          with open(fp,'rb') as f: fb=plistlib.load(f)
+          assert fb['PROJECT_ID']=='dafterqarz'
+          assert fb['BUNDLE_ID']=='com.void.daftarQarz'
+          assert fb['GOOGLE_APP_ID']=='1:308705635892:ios:c76aa9e6cb84662f4a2461'
+          runner=os.path.join(app,'Runner')
+          rs=subprocess.run(['strings',runner],check=True,text=True,capture_output=True).stdout
+          for marker in ('FLTFirebaseCorePlugin','FLTFirebaseMessagingPlugin','FIRMessaging'):
+              assert marker in rs, marker
+          with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for root,_,files in os.walk(os.path.join(work,'Payload')):
+                  for fn in files:
+                      p=os.path.join(root,fn)
+                      z.write(p,os.path.relpath(p,work))
+          print('Bundle:', info['CFBundleIdentifier'])
+          print('Version:', info['CFBundleShortVersionString'])
+          print('Build:', info['CFBundleVersion'])
+          print('Background modes:', info['UIBackgroundModes'])
+          print('Firebase/APNs-ready metadata verified')
+          PY
+          cp signing/Daftarqarzsafeen.entitlements.plist Daftarqarzsafeen-build24.entitlements.plist
+          sha256sum Daftarqarzsafeen-0.2.7-build24.ipa
+
+      - name: Publish new IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload daftarqarz-latest \
+            Daftarqarzsafeen-0.2.7-build24.ipa \
+            Daftarqarzsafeen-build24.entitlements.plist \
+            --clobber
+
+      - name: Verify download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir verify
+          gh release download daftarqarz-latest -p 'Daftarqarzsafeen-0.2.7-build24.ipa' -D verify
+          test -s verify/Daftarqarzsafeen-0.2.7-build24.ipa
+          sha256sum verify/Daftarqarzsafeen-0.2.7-build24.ipa
