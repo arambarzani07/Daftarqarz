@@ -164,9 +164,17 @@ jobs:
           )
           shasum -a 256 build/ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa | tee build/ipa-output/Daftarqarzsafeen-build26.sha256
 
-      - name: Remove checked-out private source before publishing
+      - name: Stage publish outputs and wipe private source
         shell: bash
-        run: rm -rf private-source
+        run: |
+          set -euo pipefail
+          rm -rf publish
+          mkdir publish
+          cp private-source/source/build/ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa publish/
+          cp private-source/source/build/ipa-output/Daftarqarzsafeen-build26.entitlements.plist publish/
+          cp private-source/source/build/ipa-output/Daftarqarzsafeen-build26.sha256 publish/
+          cp PRIVATE_SOURCE_SHA.txt publish/
+          rm -rf private-source
 
       - name: Publish build 26 to public release
         env:
@@ -176,9 +184,24 @@ jobs:
           set -euo pipefail
           gh release view daftarqarz-latest --repo arambarzani07/Daftarqarz >/dev/null
           gh release upload daftarqarz-latest \
-            private-source/source/build/ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa \
-            private-source/source/build/ipa-output/Daftarqarzsafeen-build26.entitlements.plist \
-            private-source/source/build/ipa-output/Daftarqarzsafeen-build26.sha256 \
-            PRIVATE_SOURCE_SHA.txt \
+            publish/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa \
+            publish/Daftarqarzsafeen-build26.entitlements.plist \
+            publish/Daftarqarzsafeen-build26.sha256 \
+            publish/PRIVATE_SOURCE_SHA.txt \
             --repo arambarzani07/Daftarqarz \
             --clobber
+
+      - name: Verify published IPA is downloadable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf verify-download
+          mkdir verify-download
+          gh release download daftarqarz-latest \
+            -p 'Daftarqarzsafeen-0.2.7-build26-unsigned.ipa' \
+            -D verify-download \
+            --repo arambarzani07/Daftarqarz
+          test -s verify-download/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa
+          shasum -a 256 verify-download/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa
