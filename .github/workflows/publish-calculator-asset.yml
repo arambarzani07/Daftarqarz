@@ -34,4 +34,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release upload daftarqarz-latest calculator.gif --clobber
+          gh release upload daftarqarz-latest calculator.gif \
+            --repo arambarzani07/Daftarqarz \
+            --clobber
