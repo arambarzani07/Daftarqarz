@@ -33,6 +33,7 @@ jobs:
           import os
           import plistlib
           import shutil
+          import subprocess
           import zipfile
 
           source = 'input/Daftarqarzsafeen.ipa'
@@ -52,7 +53,6 @@ jobs:
           info_path = os.path.join(app, 'Info.plist')
           with open(info_path, 'rb') as fh:
               info = plistlib.load(fh)
-
           bundle_id = info.get('CFBundleIdentifier')
           if bundle_id != 'com.void.daftarQarz':
               raise SystemExit(f'Unexpected bundle id: {bundle_id!r}')
@@ -83,13 +83,16 @@ jobs:
           with open(firebase_path, 'wb') as fh:
               plistlib.dump(firebase, fh, fmt=plistlib.FMT_XML, sort_keys=False)
 
-          frameworks_dir = os.path.join(app, 'Frameworks')
-          frameworks = sorted(os.path.basename(p) for p in glob.glob(os.path.join(frameworks_dir, '*.framework')))
-          print('Embedded frameworks:', ', '.join(frameworks))
-          required = {'firebase_core.framework', 'firebase_messaging.framework'}
-          missing = required.difference(frameworks)
-          if missing:
-              raise SystemExit('Missing Flutter Firebase plugin framework(s): ' + ', '.join(sorted(missing)))
+          runner = os.path.join(app, 'Runner')
+          app_binary = os.path.join(app, 'Frameworks', 'App.framework', 'App')
+          runner_strings = subprocess.run(['strings', runner], check=True, text=True, capture_output=True).stdout
+          app_strings = subprocess.run(['strings', app_binary], check=True, text=True, capture_output=True).stdout
+          for marker in ('FLTFirebaseCorePlugin', 'FLTFirebaseMessagingPlugin', 'FIRMessaging'):
+              if marker not in runner_strings:
+                  raise SystemExit(f'Missing native Firebase marker: {marker}')
+          for marker in ('firebase_messaging', 'firebaseMessagingBackgroundHandler'):
+              if marker not in app_strings:
+                  raise SystemExit(f'Missing Dart Firebase marker: {marker}')
 
           with open(firebase_path, 'rb') as fh:
               check = plistlib.load(fh)
@@ -97,6 +100,7 @@ jobs:
           assert check['BUNDLE_ID'] == 'com.void.daftarQarz'
           assert check['GCM_SENDER_ID'] == '308705635892'
           assert check['GOOGLE_APP_ID'] == '1:308705635892:ios:c76aa9e6cb84662f4a2461'
+          assert 'fetch' in info['UIBackgroundModes']
           assert 'remote-notification' in info['UIBackgroundModes']
 
           if os.path.exists(output):
@@ -112,8 +116,7 @@ jobs:
           print('Version:', info.get('CFBundleShortVersionString'))
           print('Build:', info.get('CFBundleVersion'))
           print('Background modes:', info.get('UIBackgroundModes'))
-          print('firebase_core.framework: present')
-          print('firebase_messaging.framework: present')
+          print('Native Firebase Core/Messaging: static-linked and verified')
           PY
 
           cat > Daftarqarzsafeen.entitlements.plist <<'EOF'
@@ -129,7 +132,6 @@ jobs:
 
           test -s Daftarqarzsafeen.ipa
           unzip -l Daftarqarzsafeen.ipa | grep -q 'Payload/Runner.app/GoogleService-Info.plist'
-          unzip -l Daftarqarzsafeen.ipa | grep -q 'Payload/Runner.app/Frameworks/firebase_messaging.framework/'
           sha256sum Daftarqarzsafeen.ipa
 
       - name: Preserve original and publish fixed IPA
