@@ -1,0 +1,91 @@
+name: Publish Exact Original Design IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-original-design-build24.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download original iPhone IPA
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 2 --output original.ipa 'https://ucc9a4a98f6ae3293cdc1bb2a23c.dl.dropboxusercontent.com/cd/0/get/DIIWBeSa_RhPxU7RPgzEwLy-GvRm3TbSvAk2wxTe3jDbgGHTbnwzavGiZuA24SO4GW6qYkuWixTutdJytDb73Kgw388wc1Wm7NolaFyfpQkpfEBHicwFnu31ZfyZjgJvDplVzI3-og4XYgGhB4c92s-SU8wLARK39jkjscTmiKt80Q/file?c_luid=0d2afbfd'
+          echo '261d4bcf6b83c919acd3d7bbdb88889e15671a140be8765863cc43394ff4d7a6  original.ipa' | sha256sum -c -
+
+      - name: Verify original identity and preserve design binary
+        run: |
+          set -euo pipefail
+          rm -rf work
+          mkdir work
+          unzip -q original.ipa -d work
+          python3 - <<'PY'
+          import plistlib, pathlib, hashlib
+          app = pathlib.Path('work/Payload/Runner.app')
+          info_path = app/'Info.plist'
+          with info_path.open('rb') as f:
+              info = plistlib.load(f)
+          assert info['CFBundleIdentifier'] == 'com.void.daftarQarz'
+          assert info['CFBundleShortVersionString'] == '0.2.7'
+          assert info['CFBundleVersion'] == '23'
+          assert info['MinimumOSVersion'] == '15.5'
+          fb = plistlib.load((app/'GoogleService-Info.plist').open('rb'))
+          assert fb['PROJECT_ID'] == 'dafterqarz'
+          assert fb['GOOGLE_APP_ID'] == '1:308705635892:ios:c76aa9e6cb84662f4a2461'
+          assert (app/'Frameworks/FirebaseMessaging.framework/FirebaseMessaging').exists()
+          assert (app/'Frameworks/App.framework/App').exists()
+          # Only bump the build number. App/Runner executables and Flutter assets are untouched,
+          # preserving the exact original design and behavior.
+          info['CFBundleVersion'] = '24'
+          with info_path.open('wb') as f:
+              plistlib.dump(info, f, fmt=plistlib.FMT_BINARY)
+          print('Bundle:', info['CFBundleIdentifier'])
+          print('Version:', info['CFBundleShortVersionString'])
+          print('Build:', info['CFBundleVersion'])
+          print('Minimum iOS:', info['MinimumOSVersion'])
+          PY
+          rm -rf work/Payload/Runner.app/_CodeSignature
+          rm -f work/Payload/Runner.app/embedded.mobileprovision
+
+      - name: Package exact-design build 24 IPA
+        run: |
+          set -euo pipefail
+          (cd work && zip -qry ../Daftarqarz-OriginalDesign-0.2.7-build24.ipa Payload)
+          test -s Daftarqarz-OriginalDesign-0.2.7-build24.ipa
+          unzip -p Daftarqarz-OriginalDesign-0.2.7-build24.ipa Payload/Runner.app/Info.plist > /tmp/Info.plist
+          python3 - <<'PY'
+          import plistlib
+          info=plistlib.load(open('/tmp/Info.plist','rb'))
+          assert info['CFBundleIdentifier']=='com.void.daftarQarz'
+          assert info['CFBundleShortVersionString']=='0.2.7'
+          assert info['CFBundleVersion']=='24'
+          PY
+          sha256sum Daftarqarz-OriginalDesign-0.2.7-build24.ipa
+
+      - name: Publish exact-design IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload daftarqarz-latest \
+            Daftarqarz-OriginalDesign-0.2.7-build24.ipa \
+            --clobber
+
+      - name: Verify release download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir verify
+          gh release download daftarqarz-latest -p 'Daftarqarz-OriginalDesign-0.2.7-build24.ipa' -D verify
+          test -s verify/Daftarqarz-OriginalDesign-0.2.7-build24.ipa
+          sha256sum verify/Daftarqarz-OriginalDesign-0.2.7-build24.ipa
