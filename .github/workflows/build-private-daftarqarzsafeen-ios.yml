@@ -26,7 +26,6 @@ jobs:
           set -euo pipefail
           if [ -z "${PRIVATE_REPO_TOKEN:-}" ]; then
             echo 'Missing repository secret: DAFTARQARZSAFEEN_READ_TOKEN'
-            echo 'Create a fine-grained GitHub token with Contents: Read access only to arambarzani07/Daftarqarzsafeen, then save it as that Actions secret in this public build repository.'
             exit 2
           fi
 
@@ -46,6 +45,22 @@ jobs:
           set -euo pipefail
           cd private-source
           git rev-parse HEAD | tee ../PRIVATE_SOURCE_SHA.txt
+
+      - name: Verify locked legacy visual contract is active
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'version: 0.2.7+27' private-source/source/pubspec.yaml
+          grep -q 'LockedLegacyMainScreen' private-source/source/lib/widgets/home_totals_panel.dart
+          grep -q 'class LockedLegacyMainScreen' private-source/source/lib/screens/locked_legacy_main_screen.dart
+          grep -q 'ThemeMode themeMode = ThemeMode.dark' private-source/source/lib/state/app_settings_controller.dart
+          grep -q "'کۆی گشتی قەرز :'" private-source/source/lib/screens/locked_legacy_main_screen.dart
+          grep -q "'کۆی گشتی وەرگیراو :'" private-source/source/lib/screens/locked_legacy_main_screen.dart
+          grep -q "'قەرزی گشتی ئێستا :'" private-source/source/lib/screens/locked_legacy_main_screen.dart
+          if grep -q '_NoticeCard' private-source/source/lib/screens/locked_legacy_main_screen.dart; then
+            echo 'Locked home was polluted by a new notice card.'
+            exit 3
+          fi
 
       - uses: subosito/flutter-action@v2
         with:
@@ -113,7 +128,6 @@ jobs:
           EOF
 
           cp "$FIREBASE_PLIST" ios/Runner/GoogleService-Info.plist
-
           test "$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$FIREBASE_PLIST")" = 'dafterqarz'
           test "$(/usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$FIREBASE_PLIST")" = 'com.void.daftarQarz'
           test "$(/usr/libexec/PlistBuddy -c 'Print :GOOGLE_APP_ID' "$FIREBASE_PLIST")" = '1:308705635892:ios:c76aa9e6cb84662f4a2461'
@@ -139,7 +153,7 @@ jobs:
 
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = 'com.void.daftarQarz'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = '0.2.7'
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '26'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '27'
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '15.5'
           test "$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$APP/GoogleService-Info.plist")" = 'dafterqarz'
           test "$(/usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$APP/GoogleService-Info.plist")" = 'com.void.daftarQarz'
@@ -157,12 +171,12 @@ jobs:
           rm -rf build/ipa-package build/ipa-output
           mkdir -p build/ipa-package/Payload build/ipa-output
           cp -R build/ios/iphoneos/Runner.app build/ipa-package/Payload/Runner.app
-          cp ios/Runner/Runner.entitlements build/ipa-output/Daftarqarzsafeen-build26.entitlements.plist
+          cp ios/Runner/Runner.entitlements build/ipa-output/Daftarqarzsafeen-build27.entitlements.plist
           (
             cd build/ipa-package
-            zip -qry ../ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa Payload
+            zip -qry ../ipa-output/Daftarqarzsafeen-0.2.7-build27-unsigned.ipa Payload
           )
-          shasum -a 256 build/ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa | tee build/ipa-output/Daftarqarzsafeen-build26.sha256
+          shasum -a 256 build/ipa-output/Daftarqarzsafeen-0.2.7-build27-unsigned.ipa | tee build/ipa-output/Daftarqarzsafeen-build27.sha256
 
       - name: Stage publish outputs and wipe private source
         shell: bash
@@ -170,13 +184,13 @@ jobs:
           set -euo pipefail
           rm -rf publish
           mkdir publish
-          cp private-source/source/build/ipa-output/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa publish/
-          cp private-source/source/build/ipa-output/Daftarqarzsafeen-build26.entitlements.plist publish/
-          cp private-source/source/build/ipa-output/Daftarqarzsafeen-build26.sha256 publish/
+          cp private-source/source/build/ipa-output/Daftarqarzsafeen-0.2.7-build27-unsigned.ipa publish/
+          cp private-source/source/build/ipa-output/Daftarqarzsafeen-build27.entitlements.plist publish/
+          cp private-source/source/build/ipa-output/Daftarqarzsafeen-build27.sha256 publish/
           cp PRIVATE_SOURCE_SHA.txt publish/
           rm -rf private-source
 
-      - name: Publish build 26 to public release
+      - name: Publish build 27 to public release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -184,9 +198,9 @@ jobs:
           set -euo pipefail
           gh release view daftarqarz-latest --repo arambarzani07/Daftarqarz >/dev/null
           gh release upload daftarqarz-latest \
-            publish/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa \
-            publish/Daftarqarzsafeen-build26.entitlements.plist \
-            publish/Daftarqarzsafeen-build26.sha256 \
+            publish/Daftarqarzsafeen-0.2.7-build27-unsigned.ipa \
+            publish/Daftarqarzsafeen-build27.entitlements.plist \
+            publish/Daftarqarzsafeen-build27.sha256 \
             publish/PRIVATE_SOURCE_SHA.txt \
             --repo arambarzani07/Daftarqarz \
             --clobber
@@ -200,8 +214,8 @@ jobs:
           rm -rf verify-download
           mkdir verify-download
           gh release download daftarqarz-latest \
-            -p 'Daftarqarzsafeen-0.2.7-build26-unsigned.ipa' \
+            -p 'Daftarqarzsafeen-0.2.7-build27-unsigned.ipa' \
             -D verify-download \
             --repo arambarzani07/Daftarqarz
-          test -s verify-download/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa
-          shasum -a 256 verify-download/Daftarqarzsafeen-0.2.7-build26-unsigned.ipa
+          test -s verify-download/Daftarqarzsafeen-0.2.7-build27-unsigned.ipa
+          shasum -a 256 verify-download/Daftarqarzsafeen-0.2.7-build27-unsigned.ipa
